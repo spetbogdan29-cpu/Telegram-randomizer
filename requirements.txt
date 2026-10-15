@@ -1,4 +1,4 @@
-flask[async]>=3.0,<4
+fastapi>=0.115,<1
+uvicorn[standard]>=0.30,<1
 python-telegram-bot>=21.10,<22
 psycopg[binary]>=3.2,<4
-gunicorn>=22,<24
