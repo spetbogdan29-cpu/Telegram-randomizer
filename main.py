@@ -65,6 +65,16 @@ def get_group_names(chat_id):
         ).fetchall()
 
 
+def group_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("➕ Добавить участников", callback_data="group_add"),
+         InlineKeyboardButton("📋 Список участников", callback_data="group_list")],
+        [InlineKeyboardButton("🎯 Выбрать участника", callback_data="group_pick"),
+         InlineKeyboardButton("🏆 Несколько победителей", callback_data="group_multi")],
+        [InlineKeyboardButton("🗑 Очистить список группы", callback_data="group_clear")]
+    ])
+
+
 def keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("➕ Добавить имена", callback_data="add"),
@@ -102,13 +112,10 @@ async def group_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await message.reply_text(
         "👥 <b>Групповой рандомайзер</b>\n\n"
-        "Добавить участников:\n/groupadd Анна, Борис, Виктор\n\n"
-        "Посмотреть список: /grouplist\n"
-        "Выбрать случайного участника: /grouppick\n"
-        "Очистить список: /groupclear\n\n"
-        "Список отдельный для каждой группы. Бот не может автоматически получить "
-        "полный список участников чата, поэтому имена нужно добавить командой.",
-        parse_mode="HTML"
+        "Выбери действие кнопкой ниже. Имена для розыгрыша добавляются вручную: "
+        "бот не может автоматически получить полный список участников чата.",
+        parse_mode="HTML",
+        reply_markup=group_keyboard()
     )
 
 
@@ -269,15 +276,73 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text("⚠️ Чтобы удалить все имена, напиши ДА. Для отмены напиши НЕТ.")
     elif action == "group_help":
         await query.message.reply_text(
-            "👥 Для группового режима добавь бота в групповой чат и используй там:\n"
-            "/group — помощь\n"
-            "/groupadd Анна, Борис, Виктор — добавить имена\n"
-            "/grouplist — показать список\n"
-            "/grouppick — выбрать случайного участника\n"
-            "/groupmulti 3 — выбрать указанное количество участников без повторений\n"
-            "/groupclear — очистить список",
+            "👥 Для группового режима добавь бота в групповой чат и отправь там /group. "
+            "После этого управляй розыгрышем кнопками в сообщении бота.",
             reply_markup=keyboard()
         )
+    elif action.startswith("group_"):
+        chat = query.message.chat if query.message else None
+        if not chat or chat.type not in ("group", "supergroup"):
+            await query.message.reply_text(
+                "Открой групповое меню командой /group прямо в нужной группе."
+            )
+            return
+
+        if action == "group_add":
+            context.user_data["mode"] = "group_add"
+            context.user_data["group_chat_id"] = chat.id
+            await query.message.reply_text(
+                "✍️ Отправь имена участников одним сообщением — каждое с новой строки или через запятую. "
+                "Они будут добавлены в список этой группы."
+            )
+        elif action == "group_list":
+            names = get_group_names(chat.id)
+            if not names:
+                await query.message.reply_text(
+                    "Список группы пока пуст. Нажми «➕ Добавить участников».",
+                    reply_markup=group_keyboard()
+                )
+            else:
+                result = "📋 <b>Участники для розыгрыша:</b>\\n\\n" + "\\n".join(
+                    f"{i}. {row['name']}" for i, row in enumerate(names, 1)
+                )
+                await query.message.reply_text(
+                    result, parse_mode="HTML", reply_markup=group_keyboard()
+                )
+        elif action == "group_pick":
+            names = get_group_names(chat.id)
+            if not names:
+                await query.message.reply_text(
+                    "Список группы пуст. Сначала нажми «➕ Добавить участников».",
+                    reply_markup=group_keyboard()
+                )
+            else:
+                winner = random.choice(names)["name"]
+                await query.message.reply_text(
+                    f"🎯 Случайный участник: <b>{winner}</b>",
+                    parse_mode="HTML", reply_markup=group_keyboard()
+                )
+        elif action == "group_multi":
+            names = get_group_names(chat.id)
+            if not names:
+                await query.message.reply_text(
+                    "Список группы пуст. Сначала добавь участников.",
+                    reply_markup=group_keyboard()
+                )
+            else:
+                context.user_data["mode"] = "group_multi"
+                context.user_data["group_chat_id"] = chat.id
+                await query.message.reply_text(
+                    f"🏆 Сколько победителей выбрать? В списке {len(names)} участников. "
+                    f"Отправь число от 1 до {len(names)}."
+                )
+        elif action == "group_clear":
+            with db() as conn:
+                conn.execute("DELETE FROM group_names WHERE chat_id=%s", (chat.id,))
+            await query.message.reply_text(
+                "🗑 Список участников этой группы очищен.",
+                reply_markup=group_keyboard()
+            )
     elif action == "help":
         await query.message.reply_text(
             "ℹ️ <b>Как пользоваться</b>\n"
@@ -290,16 +355,79 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.effective_message
+    if not message or not message.text:
+        return
+
     mode = context.user_data.get("mode")
-    logging.info("Incoming text message: user_id=%s mode=%s text=%r", update.effective_user.id if update.effective_user else None, mode, update.effective_message.text if update.effective_message else None)
+    chat = message.chat
+    logging.info("Incoming text message: user_id=%s chat_id=%s chat_type=%s mode=%s text=%r",
+                 update.effective_user.id if update.effective_user else None,
+                 chat.id, chat.type, mode, message.text)
+
+    # Не отвечаем на обычные сообщения группы. В группе обрабатываем текст
+    # только после нажатия соответствующей кнопки группового меню.
+    if chat.type in ("group", "supergroup"):
+        if mode not in ("group_add", "group_multi") or context.user_data.get("group_chat_id") != chat.id:
+            return
+    elif chat.type != "private":
+        return
+    elif mode in ("group_add", "group_multi"):
+        return
+
     if not mode:
-        await update.effective_message.reply_text(
+        # Личное меню показываем только в личном чате; в группах молчим.
+        await message.reply_text(
             "Используй меню ниже или отправь /start.", reply_markup=keyboard()
         )
         return
 
     user_id = update.effective_user.id
-    text = update.effective_message.text.strip()
+    text = message.text.strip()
+
+    if mode == "group_add":
+        raw_names = text.replace("\\r", "\\n").replace(",", "\\n").split("\\n")
+        clean = []
+        seen = set()
+        for item in raw_names:
+            name = " ".join(item.split()).strip()
+            if name and name.casefold() not in seen:
+                clean.append(name[:100])
+                seen.add(name.casefold())
+        if not clean:
+            await message.reply_text("Не нашёл имён. Отправь их ещё раз или нажми кнопку позже.")
+            return
+        with db() as conn:
+            conn.cursor().executemany(
+                """INSERT INTO group_names (chat_id, name, added_by)
+                   VALUES (%s, %s, %s) ON CONFLICT (chat_id, name) DO NOTHING""",
+                [(chat.id, name, user_id) for name in clean]
+            )
+        context.user_data.pop("mode", None)
+        context.user_data.pop("group_chat_id", None)
+        await message.reply_text(
+            f"✅ Список группы обновлён. Всего участников: {len(get_group_names(chat.id))}.",
+            reply_markup=group_keyboard()
+        )
+        return
+    elif mode == "group_multi":
+        try:
+            count = int(text)
+        except ValueError:
+            await message.reply_text("Отправь количество числом, например 3.")
+            return
+        names = get_group_names(chat.id)
+        if count < 1 or count > len(names):
+            await message.reply_text(f"Укажи число от 1 до {len(names)}.")
+            return
+        winners = random.sample(names, count)
+        context.user_data.pop("mode", None)
+        context.user_data.pop("group_chat_id", None)
+        result = "🏆 <b>Победители:</b>\\n\\n" + "\\n".join(
+            f"{i}. {row['name']}" for i, row in enumerate(winners, 1)
+        )
+        await message.reply_text(result, parse_mode="HTML", reply_markup=group_keyboard())
+        return
 
     if mode == "add":
         raw_names = text.replace("\r", "\n").replace(",", "\n").split("\n")
