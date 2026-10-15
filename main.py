@@ -303,7 +303,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     reply_markup=group_keyboard()
                 )
             else:
-                result = "📋 <b>Участники для розыгрыша:</b>\\n\\n" + "\\n".join(
+                result = "📋 <b>Участники для розыгрыша:</b>\n\n" + "\n".join(
                     f"{i}. {row['name']}" for i, row in enumerate(names, 1)
                 )
                 await query.message.reply_text(
@@ -386,7 +386,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = message.text.strip()
 
     if mode == "group_add":
-        raw_names = text.replace("\\r", "\\n").replace(",", "\\n").split("\\n")
+        raw_names = text.replace("\r", "\n").replace(",", "\n").split("\n")
         clean = []
         seen = set()
         for item in raw_names:
@@ -423,7 +423,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         winners = random.sample(names, count)
         context.user_data.pop("mode", None)
         context.user_data.pop("group_chat_id", None)
-        result = "🏆 <b>Победители:</b>\\n\\n" + "\\n".join(
+        result = "🏆 <b>Победители:</b>\n\n" + "\n".join(
             f"{i}. {row['name']}" for i, row in enumerate(winners, 1)
         )
         await message.reply_text(result, parse_mode="HTML", reply_markup=group_keyboard())
