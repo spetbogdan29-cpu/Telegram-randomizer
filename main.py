@@ -37,6 +37,16 @@ def init_db():
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS group_names (
+                id BIGSERIAL PRIMARY KEY,
+                chat_id BIGINT NOT NULL,
+                name TEXT NOT NULL,
+                added_by BIGINT,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                UNIQUE (chat_id, name)
+            )
+        """)
 
 
 def get_names(user_id):
@@ -44,6 +54,14 @@ def get_names(user_id):
         return conn.execute(
             "SELECT id, name FROM names WHERE user_id=%s ORDER BY id",
             (user_id,)
+        ).fetchall()
+
+
+def get_group_names(chat_id):
+    with db() as conn:
+        return conn.execute(
+            "SELECT id, name FROM group_names WHERE chat_id=%s ORDER BY id",
+            (chat_id,)
         ).fetchall()
 
 
@@ -55,6 +73,7 @@ def keyboard():
          InlineKeyboardButton("🏆 Несколько победителей", callback_data="multi")],
         [InlineKeyboardButton("➖ Удалить имя", callback_data="delete"),
          InlineKeyboardButton("🗑 Очистить список", callback_data="clear")],
+        [InlineKeyboardButton("👥 Групповой режим", callback_data="group_help")],
         [InlineKeyboardButton("ℹ️ Помощь", callback_data="help")]
     ])
 
@@ -71,6 +90,89 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text(
         WELCOME, reply_markup=keyboard(), parse_mode="HTML"
     )
+
+
+async def group_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.effective_message
+    if message.chat.type not in ("group", "supergroup"):
+        await message.reply_text(
+            "👥 Добавь меня в групповой чат, затем используй там команду /group. "
+            "В группе добавляйте участников командой /groupadd Имя1, Имя2."
+        )
+        return
+    await message.reply_text(
+        "👥 <b>Групповой рандомайзер</b>\n\n"
+        "Добавить участников:\n/groupadd Анна, Борис, Виктор\n\n"
+        "Посмотреть список: /grouplist\n"
+        "Выбрать случайного участника: /grouppick\n"
+        "Очистить список: /groupclear\n\n"
+        "Список отдельный для каждой группы. Бот не может автоматически получить "
+        "полный список участников чата, поэтому имена нужно добавить командой.",
+        parse_mode="HTML"
+    )
+
+
+async def group_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.effective_message
+    if message.chat.type not in ("group", "supergroup"):
+        await message.reply_text("Эту команду нужно использовать в группе Telegram.")
+        return
+    raw = " ".join(context.args).replace("\r", "\n").replace(",", "\n").split("\n")
+    clean = []
+    for item in raw:
+        name = " ".join(item.split()).strip()
+        if name and name.casefold() not in {n.casefold() for n in clean}:
+            clean.append(name[:100])
+    if not clean:
+        await message.reply_text("Укажи имена после команды, например:\n/groupadd Анна, Борис, Виктор")
+        return
+    with db() as conn:
+        conn.executemany(
+            """INSERT INTO group_names (chat_id, name, added_by)
+               VALUES (%s, %s, %s) ON CONFLICT (chat_id, name) DO NOTHING""",
+            [(message.chat.id, name, update.effective_user.id if update.effective_user else None)
+             for name in clean]
+        )
+    count = len(get_group_names(message.chat.id))
+    await message.reply_text(f"✅ Список группы обновлён. Всего участников в списке: {count}.")
+
+
+async def group_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.effective_message
+    if message.chat.type not in ("group", "supergroup"):
+        await message.reply_text("Эту команду нужно использовать в группе Telegram.")
+        return
+    names = get_group_names(message.chat.id)
+    if not names:
+        await message.reply_text("Список пуст. Добавь имена командой /groupadd Анна, Борис.")
+        return
+    text = "📋 <b>Список участников группы:</b>\n\n" + "\n".join(
+        f"{i}. {row['name']}" for i, row in enumerate(names, 1)
+    )
+    await message.reply_text(text, parse_mode="HTML")
+
+
+async def group_pick(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.effective_message
+    if message.chat.type not in ("group", "supergroup"):
+        await message.reply_text("Эту команду нужно использовать в группе Telegram.")
+        return
+    names = get_group_names(message.chat.id)
+    if not names:
+        await message.reply_text("Список пуст. Сначала добавь участников командой /groupadd.")
+        return
+    winner = random.choice(names)["name"]
+    await message.reply_text(f"🎯 Случайный участник группы: <b>{winner}</b>", parse_mode="HTML")
+
+
+async def group_clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.effective_message
+    if message.chat.type not in ("group", "supergroup"):
+        await message.reply_text("Эту команду нужно использовать в группе Telegram.")
+        return
+    with db() as conn:
+        conn.execute("DELETE FROM group_names WHERE chat_id=%s", (message.chat.id,))
+    await message.reply_text("🗑 Список участников этой группы очищен.")
 
 
 async def show_list(query, user_id):
@@ -135,6 +237,16 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             context.user_data["mode"] = "clear_confirm"
             await query.message.reply_text("⚠️ Чтобы удалить все имена, напиши ДА. Для отмены напиши НЕТ.")
+    elif action == "group_help":
+        await query.message.reply_text(
+            "👥 Для группового режима добавь бота в групповой чат и используй там:\n"
+            "/group — помощь\n"
+            "/groupadd Анна, Борис, Виктор — добавить имена\n"
+            "/grouplist — показать список\n"
+            "/grouppick — выбрать случайного участника\n"
+            "/groupclear — очистить список",
+            reply_markup=keyboard()
+        )
     elif action == "help":
         await query.message.reply_text(
             "ℹ️ <b>Как пользоваться</b>\n"
@@ -236,6 +348,11 @@ async def post_init(application: Application):
 
 telegram_app.add_handler(CommandHandler("start", start))
 telegram_app.add_handler(CommandHandler("help", start))
+telegram_app.add_handler(CommandHandler("group", group_help))
+telegram_app.add_handler(CommandHandler("groupadd", group_add))
+telegram_app.add_handler(CommandHandler("grouplist", group_list))
+telegram_app.add_handler(CommandHandler("grouppick", group_pick))
+telegram_app.add_handler(CommandHandler("groupclear", group_clear))
 telegram_app.add_handler(CallbackQueryHandler(button))
 telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_message))
 
