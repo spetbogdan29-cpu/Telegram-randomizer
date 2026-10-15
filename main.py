@@ -168,6 +168,13 @@ async def group_pick(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not names:
         await message.reply_text("Список пуст. Сначала добавь участников командой /groupadd.")
         return
+    chance = 100 / len(names)
+    await message.reply_text(
+        f"📊 <b>Перед розыгрышем</b>\n"
+        f"Участников: {len(names)}\n"
+        f"Шанс каждого попасть в выбор: <b>{chance:.2f}%</b>",
+        parse_mode="HTML"
+    )
     winner = random.choice(names)["name"]
     await message.reply_text(f"🎯 Случайный участник группы: <b>{winner}</b>", parse_mode="HTML")
 
@@ -195,6 +202,14 @@ async def group_multi(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if count < 1 or count > len(names):
         await message.reply_text(f"Укажи число от 1 до {len(names)}.")
         return
+    chance = count / len(names) * 100
+    await message.reply_text(
+        f"📊 <b>Перед розыгрышем</b>\n"
+        f"Участников: {len(names)}\n"
+        f"Победителей: {count}\n"
+        f"Шанс каждого попасть в число победителей: <b>{chance:.2f}%</b>",
+        parse_mode="HTML"
+    )
     winners = random.sample(names, count)
     result = "🏆 <b>Выбранные участники:</b>\n\n" + "\n".join(
         f"{i}. {row['name']}" for i, row in enumerate(winners, 1)
@@ -243,6 +258,13 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not names:
             await query.message.reply_text("Список пуст. Сначала добавь имена.", reply_markup=keyboard())
         else:
+            chance = 100 / len(names)
+            await query.message.reply_text(
+                f"📊 <b>Перед розыгрышем</b>\n"
+                f"Участников: {len(names)}\n"
+                f"Шанс каждого: <b>{chance:.2f}%</b>",
+                parse_mode="HTML"
+            )
             winner = random.choice(names)["name"]
             await query.message.reply_text(
                 f"🎯 Случайный выбор:\n\n🏆 <b>{winner}</b>",
@@ -317,6 +339,13 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     reply_markup=group_keyboard()
                 )
             else:
+                chance = 100 / len(names)
+                await query.message.reply_text(
+                    f"📊 <b>Перед розыгрышем</b>\n"
+                    f"Участников: {len(names)}\n"
+                    f"Шанс каждого: <b>{chance:.2f}%</b>",
+                    parse_mode="HTML"
+                )
                 winner = random.choice(names)["name"]
                 await query.message.reply_text(
                     f"🎯 Случайный участник: <b>{winner}</b>",
@@ -420,6 +449,14 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if count < 1 or count > len(names):
             await message.reply_text(f"Укажи число от 1 до {len(names)}.")
             return
+        chance = count / len(names) * 100
+        await message.reply_text(
+            f"📊 <b>Перед розыгрышем</b>\n"
+            f"Участников: {len(names)}\n"
+            f"Победителей: {count}\n"
+            f"Шанс каждого попасть в число победителей: <b>{chance:.2f}%</b>",
+            parse_mode="HTML"
+        )
         winners = random.sample(names, count)
         context.user_data.pop("mode", None)
         context.user_data.pop("group_chat_id", None)
@@ -463,6 +500,14 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if count < 1 or count > len(names):
             await update.effective_message.reply_text(f"Укажи число от 1 до {len(names)}.")
             return
+        chance = count / len(names) * 100
+        await update.effective_message.reply_text(
+            f"📊 <b>Перед розыгрышем</b>\n"
+            f"Участников: {len(names)}\n"
+            f"Победителей: {count}\n"
+            f"Шанс каждого попасть в число победителей: <b>{chance:.2f}%</b>",
+            parse_mode="HTML"
+        )
         winners = random.sample(names, count)
         context.user_data.pop("mode", None)
         result = "🏆 <b>Победители:</b>\n\n" + "\n".join(
