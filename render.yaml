@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: telegram-randomizer
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn main:app --worker-class gthread --workers 1 --threads 8 --timeout 120
+    healthCheckPath: /
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: WEBHOOK_SECRET
+        generateValue: true
