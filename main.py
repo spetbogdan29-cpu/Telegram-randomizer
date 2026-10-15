@@ -1,9 +1,11 @@
 import os
 import logging
 import random
-from flask import Flask, request
+from contextlib import asynccontextmanager
+
 import psycopg
 from psycopg.rows import dict_row
+from fastapi import FastAPI, Request, HTTPException
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler, MessageHandler,
@@ -15,11 +17,9 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 TOKEN = os.environ["BOT_TOKEN"]
 DATABASE_URL = os.environ["DATABASE_URL"]
-WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "change-this-secret")
-PORT = int(os.environ.get("PORT", "10000"))
+WEBHOOK_SECRET = os.environ["WEBHOOK_SECRET"]
 PUBLIC_URL = os.environ.get("RENDER_EXTERNAL_URL", "").rstrip("/")
 
-app = Flask(__name__)
 telegram_app = Application.builder().token(TOKEN).build()
 
 
@@ -41,11 +41,10 @@ def init_db():
 
 def get_names(user_id):
     with db() as conn:
-        rows = conn.execute(
+        return conn.execute(
             "SELECT id, name FROM names WHERE user_id=%s ORDER BY id",
             (user_id,)
         ).fetchall()
-    return rows
 
 
 def keyboard():
@@ -77,7 +76,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def show_list(query, user_id):
     names = get_names(user_id)
     if not names:
-        await query.message.reply_text("📋 Список пока пуст. Нажми «Добавить имена».", reply_markup=keyboard())
+        await query.message.reply_text(
+            "📋 Список пока пуст. Нажми «Добавить имена».", reply_markup=keyboard()
+        )
         return
     text = "📋 <b>Твой список:</b>\n\n" + "\n".join(
         f"{i}. {row['name']}" for i, row in enumerate(names, 1)
@@ -104,14 +105,20 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text("Список пуст. Сначала добавь имена.", reply_markup=keyboard())
         else:
             winner = random.choice(names)["name"]
-            await query.message.reply_text(f"🎯 Случайный выбор:\n\n🏆 <b>{winner}</b>", parse_mode="HTML", reply_markup=keyboard())
+            await query.message.reply_text(
+                f"🎯 Случайный выбор:\n\n🏆 <b>{winner}</b>",
+                parse_mode="HTML", reply_markup=keyboard()
+            )
     elif action == "multi":
         names = get_names(user_id)
         if not names:
             await query.message.reply_text("Список пуст. Сначала добавь имена.", reply_markup=keyboard())
         else:
             context.user_data["mode"] = "multi"
-            await query.message.reply_text(f"🏆 Сколько победителей выбрать? В списке {len(names)} имён. Отправь число от 1 до {len(names)}.")
+            await query.message.reply_text(
+                f"🏆 Сколько победителей выбрать? В списке {len(names)} имён. "
+                f"Отправь число от 1 до {len(names)}."
+            )
     elif action == "delete":
         names = get_names(user_id)
         if not names:
@@ -132,7 +139,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(
             "ℹ️ <b>Как пользоваться</b>\n"
             "• Добавляй несколько имён сразу — через запятую или с новой строки.\n"
-            "• Список хранится в базе данных и не пропадает при перезапуске.\n"
+            "• Список хранится в PostgreSQL и не пропадает при перезапуске.\n"
             "• Каждый пользователь видит только свой список.\n"
             "• При выборе нескольких победителей имена не повторяются.",
             parse_mode="HTML", reply_markup=keyboard()
@@ -142,7 +149,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mode = context.user_data.get("mode")
     if not mode:
-        await update.effective_message.reply_text("Используй меню ниже или отправь /start.", reply_markup=keyboard())
+        await update.effective_message.reply_text(
+            "Используй меню ниже или отправь /start.", reply_markup=keyboard()
+        )
         return
 
     user_id = update.effective_user.id
@@ -154,7 +163,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for item in raw_names:
             item = " ".join(item.split()).strip()
             if item and item not in clean:
-                clean.append(item)
+                clean.append(item[:100])
         if not clean:
             await update.effective_message.reply_text("Не нашёл имён. Попробуй ещё раз.")
             return
@@ -165,7 +174,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             to_add = [n for n in clean if n.casefold() not in existing]
             conn.executemany(
                 "INSERT INTO names (user_id, name) VALUES (%s, %s)",
-                [(user_id, n[:100]) for n in to_add]
+                [(user_id, n) for n in to_add]
             )
         context.user_data.pop("mode", None)
         await update.effective_message.reply_text(
@@ -216,45 +225,56 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def post_init(application: Application):
     init_db()
     if not PUBLIC_URL:
-        raise RuntimeError("RENDER_EXTERNAL_URL is not set")
+        raise RuntimeError("Render did not provide RENDER_EXTERNAL_URL")
     await application.bot.set_webhook(
         url=f"{PUBLIC_URL}/{WEBHOOK_SECRET}",
         secret_token=WEBHOOK_SECRET,
         allowed_updates=Update.ALL_TYPES
     )
-    logging.info("Webhook configured")
+    logging.info("Telegram webhook configured")
 
 
 telegram_app.add_handler(CommandHandler("start", start))
 telegram_app.add_handler(CommandHandler("help", start))
 telegram_app.add_handler(CallbackQueryHandler(button))
 telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_message))
-telegram_app.post_init = post_init
+
+
+@asynccontextmanager
+async def lifespan(web_app: FastAPI):
+    await telegram_app.initialize()
+    init_db()
+    if not PUBLIC_URL:
+        raise RuntimeError("Render did not provide RENDER_EXTERNAL_URL")
+    await telegram_app.bot.set_webhook(
+        url=f"{PUBLIC_URL}/{WEBHOOK_SECRET}",
+        secret_token=WEBHOOK_SECRET,
+        allowed_updates=Update.ALL_TYPES
+    )
+    await telegram_app.start()
+    logging.info("Bot started and webhook configured")
+    try:
+        yield
+    finally:
+        await telegram_app.stop()
+        await telegram_app.shutdown()
+
+
+app = FastAPI(lifespan=lifespan)
 
 
 @app.get("/")
-def health():
-    return "Randomizer bot is running", 200
+async def health():
+    return {"status": "ok", "service": "telegram-randomizer"}
 
 
-@app.post("/" + WEBHOOK_SECRET)
-async def webhook():
+@app.post("/{secret}")
+async def telegram_webhook(secret: str, request: Request):
+    if secret != WEBHOOK_SECRET:
+        raise HTTPException(status_code=404, detail="Not found")
     if request.headers.get("X-Telegram-Bot-Api-Secret-Token") != WEBHOOK_SECRET:
-        return "Forbidden", 403
-    update = Update.de_json(request.get_json(force=True), telegram_app.bot)
-    await telegram_app.initialize()
+        raise HTTPException(status_code=403, detail="Forbidden")
+    data = await request.json()
+    update = Update.de_json(data, telegram_app.bot)
     await telegram_app.process_update(update)
-    return "OK", 200
-
-
-if __name__ == "__main__":
-    import asyncio
-    from threading import Thread
-
-    async def setup():
-        await telegram_app.initialize()
-        await telegram_app.post_init(telegram_app)
-        await telegram_app.start()
-
-    asyncio.run(setup())
-    app.run(host="0.0.0.0", port=PORT)
+    return {"ok": True}
