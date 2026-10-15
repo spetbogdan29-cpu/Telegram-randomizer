@@ -165,6 +165,36 @@ async def group_pick(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await message.reply_text(f"🎯 Случайный участник группы: <b>{winner}</b>", parse_mode="HTML")
 
 
+async def group_multi(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.effective_message
+    if message.chat.type not in ("group", "supergroup"):
+        await message.reply_text("Эту команду нужно использовать в группе Telegram.")
+        return
+    names = get_group_names(message.chat.id)
+    if not names:
+        await message.reply_text("Список пуст. Сначала добавь участников командой /groupadd.")
+        return
+    if not context.args:
+        await message.reply_text(
+            f"🏆 Сколько участников выбрать? В списке {len(names)} имён.\n"
+            f"Напиши число командой /groupmulti 3"
+        )
+        return
+    try:
+        count = int(context.args[0])
+    except ValueError:
+        await message.reply_text("Укажи количество числом, например /groupmulti 3.")
+        return
+    if count < 1 or count > len(names):
+        await message.reply_text(f"Укажи число от 1 до {len(names)}.")
+        return
+    winners = random.sample(names, count)
+    result = "🏆 <b>Выбранные участники:</b>\n\n" + "\n".join(
+        f"{i}. {row['name']}" for i, row in enumerate(winners, 1)
+    )
+    await message.reply_text(result, parse_mode="HTML")
+
+
 async def group_clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.effective_message
     if message.chat.type not in ("group", "supergroup"):
@@ -244,6 +274,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/groupadd Анна, Борис, Виктор — добавить имена\n"
             "/grouplist — показать список\n"
             "/grouppick — выбрать случайного участника\n"
+            "/groupmulti 3 — выбрать указанное количество участников без повторений\n"
             "/groupclear — очистить список",
             reply_markup=keyboard()
         )
@@ -352,6 +383,7 @@ telegram_app.add_handler(CommandHandler("group", group_help))
 telegram_app.add_handler(CommandHandler("groupadd", group_add))
 telegram_app.add_handler(CommandHandler("grouplist", group_list))
 telegram_app.add_handler(CommandHandler("grouppick", group_pick))
+telegram_app.add_handler(CommandHandler("groupmulti", group_multi))
 telegram_app.add_handler(CommandHandler("groupclear", group_clear))
 telegram_app.add_handler(CallbackQueryHandler(button))
 telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_message))
