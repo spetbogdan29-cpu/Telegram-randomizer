@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 import psycopg
 from psycopg.rows import dict_row
 from fastapi import FastAPI, Request, HTTPException
-from telegram import (Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, BotCommandScopeAllPrivateChats, BotCommandScopeAllGroupChats)
+from telegram import (Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, BotCommandScopeDefault, BotCommandScopeAllPrivateChats, BotCommandScopeAllGroupChats)
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler, MessageHandler,
     ContextTypes, filters
@@ -541,26 +541,42 @@ async def lifespan(web_app: FastAPI):
         allowed_updates=Update.ALL_TYPES
     )
 
-    # Показываем список команд Telegram при вводе символа "/".
+    # Регистрируем команды по умолчанию и отдельно для личных чатов и групп.
+    private_commands = [
+        BotCommand("start", "Запустить бота и открыть меню"),
+        BotCommand("help", "Помощь по использованию бота"),
+    ]
+    group_commands = [
+        BotCommand("group", "Открыть меню розыгрыша в группе"),
+        BotCommand("groupadd", "Добавить имена участников"),
+        BotCommand("grouplist", "Показать список участников"),
+        BotCommand("grouppick", "Выбрать одного участника случайно"),
+        BotCommand("groupmulti", "Выбрать несколько участников"),
+        BotCommand("groupclear", "Очистить список участников группы"),
+    ]
+
     await telegram_app.bot.set_my_commands(
-        [
-            BotCommand("start", "Запустить бота и открыть меню"),
-            BotCommand("help", "Помощь по использованию бота"),
-        ],
+        private_commands, scope=BotCommandScopeAllPrivateChats()
+    )
+    await telegram_app.bot.set_my_commands(
+        group_commands, scope=BotCommandScopeAllGroupChats()
+    )
+    # Запасной список для клиентов Telegram, которые используют область по умолчанию.
+    await telegram_app.bot.set_my_commands(
+        group_commands, scope=BotCommandScopeDefault()
+    )
+
+    private_check = await telegram_app.bot.get_my_commands(
         scope=BotCommandScopeAllPrivateChats()
     )
-    await telegram_app.bot.set_my_commands(
-        [
-            BotCommand("group", "Открыть меню розыгрыша в группе"),
-            BotCommand("groupadd", "Добавить имена: /groupadd Анна, Борис"),
-            BotCommand("grouplist", "Показать список участников"),
-            BotCommand("grouppick", "Выбрать одного участника случайно"),
-            BotCommand("groupmulti", "Выбрать нескольких: /groupmulti 3"),
-            BotCommand("groupclear", "Очистить список участников группы"),
-        ],
+    group_check = await telegram_app.bot.get_my_commands(
         scope=BotCommandScopeAllGroupChats()
     )
-    logging.info("Telegram command menus configured")
+    logging.info(
+        "Telegram commands configured: private=%s group=%s",
+        [command.command for command in private_check],
+        [command.command for command in group_check],
+    )
 
     await telegram_app.start()
     logging.info("Bot started and webhook configured")
