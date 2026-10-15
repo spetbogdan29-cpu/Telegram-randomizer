@@ -291,6 +291,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mode = context.user_data.get("mode")
+    logging.info("Incoming text message: user_id=%s mode=%s text=%r", update.effective_user.id if update.effective_user else None, mode, update.effective_message.text if update.effective_message else None)
     if not mode:
         await update.effective_message.reply_text(
             "Используй меню ниже или отправь /start.", reply_markup=keyboard()
@@ -365,6 +366,16 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.effective_message.reply_text("Очистка отменена.", reply_markup=keyboard())
 
 
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    logging.exception("Unhandled Telegram update error", exc_info=context.error)
+    message = getattr(update, "effective_message", None)
+    if message:
+        try:
+            await message.reply_text("⚠️ Произошла ошибка при обработке сообщения. Ошибка записана в логи; попробуй ещё раз чуть позже.")
+        except Exception:
+            logging.exception("Could not send error notice to user")
+
+
 async def post_init(application: Application):
     init_db()
     if not PUBLIC_URL:
@@ -377,6 +388,7 @@ async def post_init(application: Application):
     logging.info("Telegram webhook configured")
 
 
+telegram_app.add_error_handler(error_handler)
 telegram_app.add_handler(CommandHandler("start", start))
 telegram_app.add_handler(CommandHandler("help", start))
 telegram_app.add_handler(CommandHandler("group", group_help))
@@ -425,5 +437,6 @@ async def telegram_webhook(secret: str, request: Request):
         raise HTTPException(status_code=403, detail="Forbidden")
     data = await request.json()
     update = Update.de_json(data, telegram_app.bot)
+    logging.info("Webhook update received: update_id=%s message=%s callback=%s", data.get("update_id"), bool(data.get("message")), bool(data.get("callback_query")))
     await telegram_app.process_update(update)
     return {"ok": True}
