@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 import psycopg
 from psycopg.rows import dict_row
 from fastapi import FastAPI, Request, HTTPException
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import (Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, BotCommandScopeAllPrivateChats, BotCommandScopeAllGroupChats)
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler, MessageHandler,
     ContextTypes, filters
@@ -540,6 +540,28 @@ async def lifespan(web_app: FastAPI):
         secret_token=WEBHOOK_SECRET,
         allowed_updates=Update.ALL_TYPES
     )
+
+    # Показываем список команд Telegram при вводе символа "/".
+    await telegram_app.bot.set_my_commands(
+        [
+            BotCommand("start", "Запустить бота и открыть меню"),
+            BotCommand("help", "Помощь по использованию бота"),
+        ],
+        scope=BotCommandScopeAllPrivateChats()
+    )
+    await telegram_app.bot.set_my_commands(
+        [
+            BotCommand("group", "Открыть меню розыгрыша в группе"),
+            BotCommand("groupadd", "Добавить имена: /groupadd Анна, Борис"),
+            BotCommand("grouplist", "Показать список участников"),
+            BotCommand("grouppick", "Выбрать одного участника случайно"),
+            BotCommand("groupmulti", "Выбрать нескольких: /groupmulti 3"),
+            BotCommand("groupclear", "Очистить список участников группы"),
+        ],
+        scope=BotCommandScopeAllGroupChats()
+    )
+    logging.info("Telegram command menus configured")
+
     await telegram_app.start()
     logging.info("Bot started and webhook configured")
     try:
