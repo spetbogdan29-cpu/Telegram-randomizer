@@ -127,7 +127,7 @@ async def group_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await message.reply_text("Укажи имена после команды, например:\n/groupadd Анна, Борис, Виктор")
         return
     with db() as conn:
-        conn.executemany(
+        conn.cursor().executemany(
             """INSERT INTO group_names (chat_id, name, added_by)
                VALUES (%s, %s, %s) ON CONFLICT (chat_id, name) DO NOTHING""",
             [(message.chat.id, name, update.effective_user.id if update.effective_user else None)
@@ -316,7 +316,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "SELECT name FROM names WHERE user_id=%s", (user_id,)
             ).fetchall()}
             to_add = [n for n in clean if n.casefold() not in existing]
-            conn.executemany(
+            conn.cursor().executemany(
                 "INSERT INTO names (user_id, name) VALUES (%s, %s)",
                 [(user_id, n) for n in to_add]
             )
